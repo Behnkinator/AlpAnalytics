@@ -8,5 +8,5 @@ scikit-learn
 xgboost
 lightgbm
 requests
-seaborn
 matplotlib
+seaborn
