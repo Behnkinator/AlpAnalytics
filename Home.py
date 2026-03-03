@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import THEME_CSS, load_stuff_model
+from utils import THEME_CSS
 
 st.set_page_config(
     page_title="AlpAnalytics",
@@ -12,11 +12,6 @@ st.markdown(THEME_CSS, unsafe_allow_html=True)
 
 # Sidebar
 st.sidebar.markdown('<div class="sidebar-logo">⚾ AlpAnalytics</div>', unsafe_allow_html=True)
-model_dict = load_stuff_model()
-if model_dict:
-    st.sidebar.success(f"✅ Model loaded · {len(model_dict['features'])} features")
-else:
-    st.sidebar.warning("⚠️ model.pkl not found")
 
 # ── Header row: title left, player search right ────────────────────────────────
 header_col, search_col = st.columns([3, 1])
