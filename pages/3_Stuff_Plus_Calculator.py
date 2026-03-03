@@ -76,6 +76,7 @@ with c_right:
                        help="How far in front of the rubber the pitcher releases. MLB avg ≈ 6.2 ft.")
 
     # Auto-calculate VAA from physics
+    # Convention matches add_engineered_features: positive = falling (lower = flatter = elite)
     _v_fts    = velo * 1.46667
     _v_avg    = _v_fts * 0.91
     _t        = 55.0 / _v_avg
@@ -84,12 +85,20 @@ with c_right:
     _az_total = -32.174 + _az_mag
     _vz0      = (2.5 - rel_height - 0.5 * _az_total * _t * _t) / _t
     _vz_plate = _vz0 + _az_total * _t
-    vaa       = float(np.clip(np.degrees(np.arctan2(_vz_plate, _v_fts)), -10, -1))
+    # Model convention: VAA is stored as positive degrees (higher = steeper = worse)
+    # Display convention (user-facing): negative degrees (e.g. -4.5°)
+    vaa_display = float(np.clip(np.degrees(np.arctan2(_vz_plate, _v_fts)), -10, -1))
+    vaa_model   = -vaa_display   # always positive for model input
+    # Horizontal approach angle (estimated from HB physics, model convention)
+    _hb_raw_ft  = (hb / 12.0) if handedness == 'R' else -(hb / 12.0)
+    _ax_est     = 2.0 * _hb_raw_ft / (_t * _t)
+    _vx_plate   = _ax_est * _t
+    haa_model   = float(-np.degrees(np.arctan(_vx_plate / _v_fts)))
     st.markdown(f"""
     <div style="background:#1c2230;border:1px solid #2a3348;border-radius:4px;padding:0.5rem 0.9rem;margin-top:0.4rem;display:flex;align-items:center;gap:0.8rem;">
         <span style="color:#8a94aa;font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;">Calculated VAA</span>
-        <span style="font-family:'Barlow Condensed',sans-serif;font-size:1.2rem;font-weight:700;color:#3a9dff;">{vaa:.1f}°</span>
-        <span style="color:#505a70;font-size:0.75rem;">{'Flat (elite)' if vaa >= -4.0 else 'Average' if vaa >= -5.5 else 'Steep'}</span>
+        <span style="font-family:'Barlow Condensed',sans-serif;font-size:1.2rem;font-weight:700;color:#3a9dff;">{vaa_display:.1f}°</span>
+        <span style="color:#505a70;font-size:0.75rem;">{'Flat (elite)' if vaa_display >= -4.0 else 'Average' if vaa_display >= -5.5 else 'Steep'}</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -113,28 +122,31 @@ if calculate:
     release_x_adj  = rel_side * (-1 if handedness == 'L' else 1)
 
     row = {
-        'pitch_type':        'FF',   # placeholder raw type
-        'pitch_type_group':  pitch_group,
-        'p_throws':          handedness,
-        'release_speed':     velo,
-        'release_spin_rate': spin_rate,
-        'spin_axis':         spin_axis,
-        'spin_axis_sin':     spin_axis_sin,
-        'spin_axis_cos':     spin_axis_cos,
-        'spin_efficiency':   spin_eff_frac,
-        'active_spin':       active_spin,
-        'gyro_spin':         gyro_spin,
-        'pfx_x_adj':         pfx_x_adj,
-        'pfx_z_adj':         ivb,
-        'pfx_x':             hb,
-        'pfx_z':             ivb,
-        'vaa':               vaa,
-        'release_extension': ext,
-        'release_pos_z':     rel_height,
-        'release_pos_x_adj': release_x_adj,
-        'release_pos_x':     rel_side,
-        'arm_angle':         arm_angle,
-        'player_name':       'Input',
+        'pitch_type':               'FF',   # placeholder raw type
+        'pitch_type_group':         pitch_group,
+        'p_throws':                 handedness,
+        'release_speed':            velo,
+        'release_spin_rate':        spin_rate,
+        'spin_axis':                spin_axis,
+        'spin_axis_sin':            spin_axis_sin,
+        'spin_axis_cos':            spin_axis_cos,
+        'spin_efficiency':          spin_eff_frac,
+        'active_spin':              active_spin,
+        'gyro_spin':                gyro_spin,
+        'pfx_x_adj':                pfx_x_adj,
+        'pfx_z_adj':                ivb,
+        'pfx_x':                    hb,
+        'pfx_z':                    ivb,
+        # VAA in model convention: positive = falling (matches add_engineered_features output)
+        'vaa':                      vaa_model,
+        'horizontal_approach_angle': haa_model,
+        'adjusted_hhaa':            0.0,   # residual from regression; 0 = average
+        'release_extension':        ext,
+        'release_pos_z':            rel_height,
+        'release_pos_x_adj':        release_x_adj,
+        'release_pos_x':            rel_side,
+        'arm_angle':                arm_angle,
+        'player_name':              'Input',
     }
     df_input = pd.DataFrame([row])
     df_scored = run_stuff_plus(df_input, model_dict)

@@ -218,19 +218,19 @@ if not data.empty:
                 axes[0].legend(fontsize=8, facecolor='#1c2230', edgecolor='#2a3348', labelcolor='#e8eaf0')
 
             if 'hb' in pitcher_df.columns and 'ivb' in pitcher_df.columns:
-                hb_plot = -pitcher_df['hb'] if hand == 'L' else pitcher_df['hb']
+                hb_plot = -pitcher_df['hb']  # pitcher's-own-view: right=3B, left=1B
                 lim = max(abs(hb_plot.max()), abs(hb_plot.min()), abs(pitcher_df['ivb'].max()), abs(pitcher_df['ivb'].min())) * 1.2
                 palette = sns.color_palette("husl", n_colors=len(pitcher_df['pitch_type'].unique()))
                 color_map = dict(zip(pitcher_df['pitch_type'].unique(), palette))
                 for pt, grp in pitcher_df.groupby('pitch_type'):
-                    hb_g = -grp['hb'] if hand == 'L' else grp['hb']
+                    hb_g = -grp['hb']  # same sign for all pitchers
                     axes[1].scatter(hb_g, grp['ivb'], alpha=0.75, s=55, color=color_map[pt], label=pt, edgecolors='none')
                     if len(grp) > 2:
                         confidence_ellipse(hb_g.values, grp['ivb'].values, axes[1], facecolor=color_map[pt], alpha=0.15, edgecolor='none')
                 axes[1].axhline(0, color='#2a3348', ls='--', alpha=0.7)
                 axes[1].axvline(0, color='#2a3348', ls='--', alpha=0.7)
                 axes[1].set_xlim(-lim, lim); axes[1].set_ylim(-lim, lim)
-                axes[1].set_xlabel("Horizontal Break (inches)"); axes[1].set_ylabel("Induced Vertical Break (inches)")
+                axes[1].set_xlabel("← 1B Side · 3B Side →"); axes[1].set_ylabel("Induced Vertical Break (inches)")
                 axes[1].set_title(f"Movement Map — Arm Angle: {arm_angle_val}°", fontsize=12, fontweight='bold')
                 axes[1].legend(fontsize=8, facecolor='#1c2230', edgecolor='#2a3348', labelcolor='#e8eaf0')
                 arm_x = 0.97 if hand == 'R' else 0.03

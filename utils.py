@@ -163,6 +163,12 @@ THEME_CSS = """
     color: var(--text-secondary); margin-bottom: 1rem;
 }
 #MainMenu, footer, [data-testid="stDecoration"] { display: none !important; }
+
+/* Hide Player Lookup + Pitch Shape Advisor from sidebar nav */
+[data-testid="stSidebarNav"] li:has(a[href*="4_Player"])  { display: none !important; }
+[data-testid="stSidebarNav"] a[href*="4_Player"]           { display: none !important; }
+[data-testid="stSidebarNav"] li:has(a[href*="2_Pitch_Shape"]) { display: none !important; }
+[data-testid="stSidebarNav"] a[href*="2_Pitch_Shape"]         { display: none !important; }
 </style>
 """
 
