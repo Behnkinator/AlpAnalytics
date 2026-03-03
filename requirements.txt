@@ -1,0 +1,10 @@
+streamlit
+pybaseball
+pandas
+numpy
+plotly
+joblib
+scikit-learn
+xgboost
+lightgbm
+requests
