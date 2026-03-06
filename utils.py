@@ -457,10 +457,10 @@ def generate_arsenal_recommendations(pitcher_df):
             lo, hi = ideal_info['ideal_axis_range']
             in_range = lo <= avg_spin_axis <= hi or (lo > hi and (avg_spin_axis >= lo or avg_spin_axis <= hi))
             if in_range:
-                rec['suggestions'].append({'type': 'axis', 'label': 'Spin Axis', 'value': f"{avg_spin_axis:.0f}°", 'note': f"Ideal — {ideal_info['desc']}", 'badge_class': 'badge-gain'})
+                rec['suggestions'].append({'type': 'axis', 'label': 'Tilt', 'value': f"{avg_spin_axis:.0f}°", 'note': f"Ideal — {ideal_info['desc']}", 'badge_class': 'badge-gain'})
             else:
                 gap = min(abs(avg_spin_axis - lo), abs(avg_spin_axis - hi))
-                rec['suggestions'].append({'type': 'axis', 'label': 'Spin Axis', 'value': f"{avg_spin_axis:.0f}°", 'note': f"{gap:.0f}° off ideal ({ideal_info['desc']})", 'badge_class': 'badge-warn'})
+                rec['suggestions'].append({'type': 'axis', 'label': 'Tilt', 'value': f"{avg_spin_axis:.0f}°", 'note': f"{gap:.0f}° off ideal ({ideal_info['desc']})", 'badge_class': 'badge-warn'})
 
         # 4. IVB
         if not pd.isna(avg_ivb) and bmarks_ivb:
@@ -548,7 +548,12 @@ def create_summary(p_data):
         agg_dict['Max Velo'] = ('release_speed', 'max')
     agg_dict['Count'] = ('pitch_type', 'count')
     if 'description' in p_data.columns:
-        agg_dict['Strike %'] = ('description', lambda x: round(x.str.contains("strike", case=False).sum() / len(x) * 100, 1))
+        _STRIKE_DESCS = {
+            'called_strike', 'swinging_strike', 'swinging_strike_blocked',
+            'foul', 'foul_tip', 'foul_bunt', 'foul_pitchout', 'missed_bunt',
+            'bunt_foul_tip',
+        }
+        agg_dict['Strike %'] = ('description', lambda x: round(x.isin(_STRIKE_DESCS).sum() / len(x) * 100, 1))
     if 'hb' in p_data.columns:
         agg_dict['Avg HB'] = ('hb', 'mean')
     if 'ivb' in p_data.columns:

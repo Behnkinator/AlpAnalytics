@@ -1,5 +1,17 @@
 import streamlit as st
+import json, os
 from utils import THEME_CSS
+
+_POSTS_FILE = os.path.join(os.path.dirname(__file__), "posts.json")
+
+def _recent_posts(n=3):
+    try:
+        with open(_POSTS_FILE) as f:
+            posts = json.load(f)
+        published = [p for p in posts if p.get('published', True)]
+        return sorted(published, key=lambda p: p.get('date', ''), reverse=True)[:n]
+    except Exception:
+        return []
 
 st.set_page_config(
     page_title="AlpAnalytics",
@@ -88,3 +100,51 @@ with c1:
     st.page_link("pages/1_Pitching_Reports.py", label="Open Pitching Reports →", icon="📊")
 with c2:
     st.page_link("pages/3_Stuff_Plus_Calculator.py", label="Open Stuff+ Calculator →", icon="🎯")
+
+# ── Blog section ────────────────────────────────────────────────────────────────
+st.markdown("<div style='height:2.5rem'></div>", unsafe_allow_html=True)
+st.markdown("""
+<div style="display:flex;align-items:baseline;justify-content:space-between;
+            border-bottom:1px solid #2a3348;padding-bottom:0.5rem;margin-bottom:1.2rem;">
+  <span style="font-family:'Barlow Condensed',sans-serif;font-size:1.3rem;font-weight:700;
+               text-transform:uppercase;letter-spacing:0.1em;color:#f0c040;">Latest Posts</span>
+</div>
+""", unsafe_allow_html=True)
+
+_posts = _recent_posts(3)
+
+if not _posts:
+    st.markdown(
+        "<div style='color:#505a70;font-size:0.85rem;'>No posts yet. "
+        "Head to the Blog to write your first post.</div>",
+        unsafe_allow_html=True,
+    )
+else:
+    _blog_cols = st.columns(len(_posts)) if len(_posts) > 1 else st.columns([1, 2])
+    for _bi, _post in enumerate(_posts):
+        _tags = [t.strip() for t in _post.get('tags', '').split(',') if t.strip()]
+        _tag_html = ''.join(
+            f"<span style='background:rgba(58,157,255,0.12);color:#3a9dff;font-size:0.66rem;"
+            f"font-weight:700;letter-spacing:0.08em;text-transform:uppercase;"
+            f"padding:0.18rem 0.5rem;border-radius:3px;margin-right:3px;'>{t}</span>"
+            for t in _tags[:3]
+        )
+        _preview = _post.get('content', '')
+        _preview = ' '.join(_preview.split())
+        _preview = (_preview[:160] + '…') if len(_preview) > 160 else _preview
+        with _blog_cols[_bi]:
+            st.markdown(f"""
+            <div style="background:#141820;border:1px solid #2a3348;border-top:3px solid #3a9dff;
+                        border-radius:8px;padding:1.3rem 1.4rem;height:100%;">
+              <div style="color:#505a70;font-size:0.72rem;font-weight:600;
+                          letter-spacing:0.08em;margin-bottom:0.5rem;">{_post.get('date','')}</div>
+              <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.25rem;font-weight:800;
+                          color:#e8eaf0;line-height:1.2;margin-bottom:0.5rem;">{_post.get('title','')}</div>
+              <div style="color:#8a94aa;font-size:0.82rem;line-height:1.55;margin-bottom:0.8rem;">
+                {_preview}</div>
+              <div>{_tag_html}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+st.markdown("<div style='height:0.8rem'></div>", unsafe_allow_html=True)
+st.page_link("pages/5_Blog.py", label="Go to Blog →", icon="✍️")

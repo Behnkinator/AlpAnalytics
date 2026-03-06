@@ -11,6 +11,18 @@ from utils import (
     PITCH_SPIN_AXIS_IDEAL, PITCH_TYPE_TO_GROUP, GROUP_TO_DISPLAY,
 )
 
+def _degrees_to_clock(deg):
+    """Convert spin axis degrees to clock face string. 180°=12:00, 270°=3:00, 0°=6:00, 90°=9:00."""
+    deg = float(deg) % 360
+    shifted = (deg - 180) % 360
+    total_min = shifted * 2
+    hr = int(total_min // 60) % 12
+    mn = int(round(total_min % 60))
+    if mn == 60:
+        hr = (hr + 1) % 12
+        mn = 0
+    return f"{12 if hr == 0 else hr}:{mn:02d}"
+
 st.set_page_config(page_title="Stuff+ Calculator · AlpAnalytics", layout="wide", page_icon="🎯", initial_sidebar_state="expanded")
 st.markdown(THEME_CSS, unsafe_allow_html=True)
 
@@ -49,7 +61,19 @@ with c_left:
     st.markdown("**Release & Velocity**")
     velo      = st.slider("Velocity (mph)",        min_value=60.0,  max_value=105.0, value=93.0, step=0.5)
     spin_rate = st.slider("Spin Rate (rpm)",        min_value=1200,  max_value=3800,  value=2300, step=10)
-    spin_axis = st.slider("Spin Axis (°)",          min_value=0,     max_value=359,   value=190,  step=1)
+    spin_axis = st.slider("Tilt (°)",               min_value=0,     max_value=359,   value=190,  step=1,
+                           help="Clock face: 180°=12:00, 270°=3:00, 0°/360°=6:00, 90°=9:00")
+    _clock_sc = _degrees_to_clock(spin_axis)
+    st.markdown(
+        f"<div style='margin-top:-0.3rem;margin-bottom:0.4rem;'>"
+        f"<span style='color:#8a94aa;font-size:0.68rem;font-weight:600;letter-spacing:0.1em;"
+        f"text-transform:uppercase;'>Tilt </span>"
+        f"<span style='font-family:\"Barlow Condensed\",sans-serif;font-size:1.05rem;"
+        f"font-weight:700;color:#f0c040;'>{_clock_sc}</span>"
+        f"<span style='color:#505a70;font-size:0.7rem;margin-left:0.4rem;'>({spin_axis}°)</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
     spin_eff  = st.slider("Spin Efficiency (%)",    min_value=0,     max_value=110,   value=92,   step=1,
                            help="Percentage of spin that generates movement (transverse spin). 100% = all active spin.")
 
@@ -220,7 +244,7 @@ if calculate:
         if bsp:
             lo, hi = bsp['ideal_axis_range']
             in_r = lo <= spin_axis <= hi or (lo > hi and (spin_axis >= lo or spin_axis <= hi))
-            rows.append(("Spin Axis", f"{spin_axis}°",
+            rows.append(("Tilt", f"{_degrees_to_clock(spin_axis)} ({spin_axis}°)",
                           "Ideal" if in_r else "Off Ideal",
                           "#3dcc7c" if in_r else "#f05050",
                           bsp['desc']))

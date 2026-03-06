@@ -72,6 +72,23 @@ def _get_complements(pitch_group):
     return _CANONICAL_PAIR.get(pitch_group, [])
 
 
+def _degrees_to_clock(deg):
+    """Convert spin axis degrees to clock face string.
+    Convention: 180° = 12:00, 270° = 3:00, 0°/360° = 6:00, 90° = 9:00.
+    Each 30° = 1 hour; each 1° = 2 minutes.
+    """
+    deg = float(deg) % 360
+    shifted = (deg - 180) % 360       # 0 at 12 o'clock, increases clockwise
+    total_min = shifted * 2            # 360° maps to 720 minutes (12-hr clock)
+    hr = int(total_min // 60) % 12
+    mn = int(round(total_min % 60))
+    if mn == 60:
+        hr = (hr + 1) % 12
+        mn = 0
+    display_hr = 12 if hr == 0 else hr
+    return f"{display_hr}:{mn:02d}"
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # PITCHER TYPE GUIDE — comprehensive data per wrist bias
 # ──────────────────────────────────────────────────────────────────────────────
@@ -406,13 +423,23 @@ def _infer_wrist_type(pitch_group, ivb, hb, spin_eff_pct):
         return ('Neutral / Both', 'Low confidence', "Below-average sweep — atypical sweeper mechanics")
 
     if pitch_group == 'Curveball':
-        if ivb <= -10 and spin_eff_pct >= 75:
-            return ('Supinator', 'High confidence',    f"{v:.0f} in drop + {spin_eff_pct}% efficiency — full supination")
+        if ivb <= -12 and spin_eff_pct >= 80:
+            return ('Supinator', 'High confidence',    f"{v:.0f} in drop + {spin_eff_pct}% efficiency — elite supination signature")
+        if ivb <= -10 and spin_eff_pct >= 70:
+            return ('Supinator', 'High confidence',    f"{v:.0f} in drop + {spin_eff_pct}% efficiency — full supination confirmed")
         if ivb <= -7:
-            return ('Supinator', 'Moderate confidence', f"{v:.0f} in drop — supinator curveball signature")
+            return ('Supinator', 'Moderate confidence', f"{v:.0f} in drop — consistent with supinator mechanics; ensure you're 'leading with the elbow' at release for more depth")
+        if ivb <= -4:
+            return ('Neutral / Both', 'Low confidence',
+                    f"Limited drop ({ivb:+.0f} in) — may be a supinator still developing the pitch. "
+                    "Try committing to full elbow-lead supination at release. "
+                    "If that doesn't increase depth, your natural motion may need a grip adjustment (index-middle over top seam).")
         if spin_eff_pct < 50:
-            return ('Neutral / Both', 'Low confidence', f"Low efficiency ({spin_eff_pct}%) — unusual curveball mechanics")
-        return ('Supinator', 'Moderate confidence', "Curveball shape — typically driven by supination")
+            return ('Neutral / Both', 'Low confidence', f"Low efficiency ({spin_eff_pct}%) — gyro-like curveball; unusual mechanics, check grip and wrist angle")
+        return ('Neutral / Both', 'Low confidence',
+                "Minimal depth — atypical for a natural supinator. "
+                "If you're trying to develop this pitch: lead with the elbow, supinate through, and stay behind the ball. "
+                "Consider whether a cutter or slider is a more natural fit for your wrist.")
 
     if pitch_group == 'Fastball':
         # Tread Athletics primary signal: spin efficiency is the strongest indicator
@@ -454,11 +481,27 @@ def _infer_wrist_type(pitch_group, ivb, hb, spin_eff_pct):
         return ('Pronator', 'Low confidence', "Changeup arm action typically reflects pronation; add FB to arsenal for efficiency comparison")
 
     if pitch_group == 'Cutter':
-        if h >= 8:
-            return ('Supinator', 'Moderate confidence', f"{h:.0f} in glove-side cut — supination-driven")
-        if h <= 4 and spin_eff_pct >= 70:
-            return ('Pronator', 'Low confidence',       "Tight cutter — pronation limiting glove-side break")
-        return ('Neutral / Both', 'Low confidence', "Balanced cutter — mechanics ambiguous")
+        if h >= 9:
+            return ('Supinator', 'High confidence',
+                    f"{h:.0f} in glove-side cut — strong supination signature; cut is a natural fit")
+        if h >= 6:
+            return ('Supinator', 'Moderate confidence',
+                    f"{h:.0f} in glove-side cut — consistent with supination. "
+                    "If you want more break, shift grip toward index finger and 'shave' across the ball at release.")
+        if h >= 3:
+            return ('Neutral / Both', 'Moderate confidence',
+                    f"{h:.0f} in glove-side cut — moderate break could indicate either a neutral pitcher "
+                    "or a supinator who needs a grip adjustment. "
+                    "Try shifting fingers more toward the index finger side and emphasizing a slight outward wrist turn at release.")
+        if spin_eff_pct >= 70:
+            return ('Pronator', 'Moderate confidence',
+                    f"Tight cutter ({hb:+.0f} in, {spin_eff_pct}% efficiency) — limited glove-side break "
+                    "suggests pronation is resisting the cut. You may be a pronator naturally. "
+                    "To add more cut: shift grip toward index finger and use a 'karate chop' cue at release. "
+                    "If break stays near 0, embrace it as a pronator gyro-cutter — pairs well with your fastball.")
+        return ('Pronator', 'Low confidence',
+                f"Minimal glove-side break ({hb:+.0f} in) — likely pronator mechanics suppressing cut. "
+                "Either lean into the gyro-style cutter or consider whether a slider better fits your natural wrist.")
 
     return ('Neutral / Both', 'Low confidence', "Insufficient data to determine wrist bias")
 
@@ -537,8 +580,27 @@ def _infer_wrist_type_arsenal(pitches):
             f"Gyro slider {sl['spin_eff']}% efficiency — pronator bullet spin (Tread pronator triangle)"))
 
     # ── Signal 7: Curveball ──────────────────────────────────────────────────
-    if cu and cu['ivb'] <= -10 and cu['spin_eff'] >= 75:
-        signals.append(('Supinator', 2, f"Curveball {cu['ivb']:.0f} IVB + {cu['spin_eff']}% eff — full supination"))
+    if cu:
+        if cu['ivb'] <= -10 and cu['spin_eff'] >= 75:
+            signals.append(('Supinator', 3, f"Curveball {cu['ivb']:.0f}\" IVB + {cu['spin_eff']}% eff — confirmed full supination"))
+        elif cu['ivb'] <= -7:
+            signals.append(('Supinator', 2, f"Curveball {cu['ivb']:.0f}\" IVB — supinator drop signature"))
+        elif cu['ivb'] > -4:
+            signals.append(('Neutral / Both', 1,
+                f"Curveball drop limited ({cu['ivb']:.0f}\" IVB) — insufficient depth to confirm supinator bias; check release mechanics"))
+
+    # ── Signal 8: Cutter glove-side break ────────────────────────────────────
+    ct = next((p for p in pitches if p['pitch_group'] == 'Cutter'), None)
+    if ct:
+        h_ct = abs(ct['hb'])
+        if h_ct >= 8:
+            signals.append(('Supinator', 2, f"{h_ct:.0f}\" glove-side cut — strong supinator cutter signature"))
+        elif h_ct >= 5:
+            signals.append(('Supinator', 1, f"{h_ct:.0f}\" glove-side cut — moderate supination signal; grip adjustment may increase break"))
+        elif h_ct <= 3 and ct['spin_eff'] >= 65:
+            signals.append(('Pronator', 2,
+                f"Cutter is tight ({h_ct:.0f}\" HB, {ct['spin_eff']}% eff) — limited glove-side break "
+                "suggests pronation is resisting the cut; may be a natural pronator throwing a gyro-style cutter"))
 
     # ── Fall back to single-pitch for single-entry arsenals ─────────────────
     if not signals:
@@ -668,8 +730,19 @@ with c_left:
     spin_rate = st.slider("Spin Rate (rpm)", min_value=1200, max_value=3800, value=2300, step=10)
     spin_eff  = st.slider("Spin Efficiency (%)", min_value=0, max_value=110, value=92, step=1,
                           help="Transverse spin percentage. 100% = all spin generates movement.")
-    spin_axis = st.slider("Spin Axis (°)", min_value=0, max_value=359, value=190, step=1,
-                          help="Clock face: 0/360=6 o'clock, 90=9 o'clock, 180=12 o'clock, 270=3 o'clock")
+    spin_axis = st.slider("Tilt (°)", min_value=0, max_value=359, value=190, step=1,
+                          help="Clock face: 180°=12:00, 270°=3:00, 0°/360°=6:00, 90°=9:00")
+    _clock_cur = _degrees_to_clock(spin_axis)
+    st.markdown(
+        f"<div style='margin-top:-0.3rem;margin-bottom:0.2rem;'>"
+        f"<span style='color:#8a94aa;font-size:0.68rem;font-weight:600;letter-spacing:0.1em;"
+        f"text-transform:uppercase;'>Tilt </span>"
+        f"<span style='font-family:\"Barlow Condensed\",sans-serif;font-size:1.05rem;"
+        f"font-weight:700;color:#f0c040;'>{_clock_cur}</span>"
+        f"<span style='color:#505a70;font-size:0.7rem;margin-left:0.4rem;'>({spin_axis}°)</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 with c_right:
     st.markdown("**Movement**")
     ivb = st.slider("Induced Vert Break (in)", min_value=-25.0, max_value=25.0, value=14.0, step=0.5,
@@ -969,7 +1042,9 @@ if analyze and st.session_state.arsenal:
                     _sa_note = f"Ideal: {bsp['desc']}"
                 st.markdown(
                     f"<div style='color:{_sa_c};font-size:0.79rem;margin-top:6px;'>"
-                    f"<b>Spin Axis {_ax}°</b> — {_sa_note}</div>",
+                    f"<b>Tilt {_degrees_to_clock(_ax)}</b>"
+                    f"<span style='color:#505a70;font-size:0.72rem;margin-left:0.3rem;'>({_ax}°)</span>"
+                    f" — {_sa_note}</div>",
                     unsafe_allow_html=True)
 
             # Wrist compatibility for this pitch
@@ -1125,35 +1200,7 @@ if analyze and st.session_state.arsenal:
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Section 3: Development Tips ──────────────────────────────────────
-        st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
-        st.markdown('<div class="section-header">Development Tips & Identification</div>', unsafe_allow_html=True)
-        _tips_html = ""
-        for _i, _tip in enumerate(_guide['dev_tips'], 1):
-            _parts = _tip.split("**: ", 1)
-            if len(_parts) == 2:
-                _title = _parts[0].lstrip("**")
-                _body  = _parts[1]
-            else:
-                _title = f"Tip {_i}"
-                _body  = _tip
-            _tips_html += f"""
-            <div style="display:flex;gap:1rem;margin-bottom:0.8rem;align-items:flex-start;">
-              <span style="flex-shrink:0;width:24px;height:24px;border-radius:50%;background:{_gc};
-                           color:#0c0f14;font-weight:800;font-size:0.78rem;display:flex;
-                           align-items:center;justify-content:center;">{_i}</span>
-              <div>
-                <div style="color:{_gc};font-weight:700;font-size:0.82rem;margin-bottom:1px;">{_title}</div>
-                <div style="color:#8a94aa;font-size:0.82rem;line-height:1.55;">{_body}</div>
-              </div>
-            </div>"""
-        st.markdown(f"""
-        <div style="background:#141820;border:1px solid #2a3348;border-radius:6px;padding:1.2rem 1.4rem;">
-          {_tips_html}
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ── Section 4: MLB Examples ───────────────────────────────────────────
+        # ── Section 3: MLB Examples ───────────────────────────────────────────
         st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
         st.markdown('<div class="section-header">MLB Examples</div>', unsafe_allow_html=True)
         _ex_cols = st.columns(len(_guide['mlb_examples']))

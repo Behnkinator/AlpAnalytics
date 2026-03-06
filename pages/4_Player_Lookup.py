@@ -95,12 +95,18 @@ def fmt_val(v, decimals=2, suffix=''):
 
 
 def savant_url(*id_vals):
-    """Return Baseball Savant video URL from sv_id or play_id (tries each in order)."""
+    """Return Baseball Savant video URL. Tries each id in order (play_id UUID first, sv_id fallback)."""
     for v in id_vals:
-        if v is not None and not (isinstance(v, float) and np.isnan(v)):
-            s = str(v).strip()
-            if s and s not in ('', 'nan', 'None', 'NaT'):
-                return f"https://baseballsavant.mlb.com/sporty-videos?playId={s}"
+        try:
+            if pd.isna(v):
+                continue
+        except (TypeError, ValueError):
+            pass
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s and s not in ('', 'nan', 'None', 'NaT', 'nat'):
+            return f"https://baseballsavant.mlb.com/sporty-videos?playId={s}"
     return ''
 
 
@@ -745,7 +751,7 @@ if st.session_state.search_results is not None:
         st.markdown(f"**{len(res_clean)} result(s) found** — click Select to view profile:")
         st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
 
-        for _, row in res_clean.iterrows():
+        for i, (_, row) in enumerate(res_clean.iterrows()):
             mlbam = row.get('key_mlbam', None)
             fg    = row.get('key_fangraphs', None)
             debut = row.get('mlb_played_first', CURRENT_YEAR)
@@ -769,16 +775,18 @@ if st.session_state.search_results is not None:
 
             rc1, rc2 = st.columns([5, 1])
             with rc1:
+                _id_hint = f"MLBAM: {mlbam_id}" if mlbam_id else (f"FG: {fg_id}" if fg_id else "")
                 st.markdown(
                     f"<div style='padding:0.55rem 1rem;background:#141820;border:1px solid #2a3348;"
                     f"border-radius:5px;display:flex;align-items:center;gap:1.2rem;margin-bottom:0.3rem;'>"
                     f"<span style='color:#e8eaf0;font-weight:700;font-size:1rem;'>{row['_Name']}</span>"
                     f"<span style='color:#505a70;font-size:0.8rem;'>{row['_Years']}</span>"
+                    f"<span style='color:#3a3d4a;font-size:0.72rem;'>{_id_hint}</span>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
             with rc2:
-                if st.button("Select →", key=f"sel_{mlbam_id}_{fg_id}"):
+                if st.button("Select →", key=f"sel_{i}_{mlbam_id}_{fg_id}"):
                     st.session_state.player_state = {
                         'mlbam_id':   mlbam_id,
                         'fg_id':      fg_id,
@@ -1373,6 +1381,11 @@ if is_pitcher:
                             balls    = pr.get('balls',   '')
                             strikes  = pr.get('strikes',  '')
                             count_str = f"{balls}-{strikes}" if balls != '' else '—'
+                            _ev_val   = pr.get('events', None)
+                            _has_event = pd.notna(_ev_val) and str(_ev_val).strip() not in ('', 'nan', 'None')
+                            _sv  = pr.get('sv_id',   None) if _has_event else None
+                            _pid = pr.get('play_id', None) if _has_event else None
+                            _vid_url = savant_url(_pid, _sv) if _has_event else ''
                             pitch_rows.append({
                                 '#':      pr.get('pitch_number', ''),
                                 'Type':   pt_name(pr.get('pitch_type', '')),
@@ -1382,13 +1395,20 @@ if is_pitcher:
                                 'HB':     fmt_val(pr.get('pfx_x', np.nan) * 12 if pd.notna(pr.get('pfx_x')) else np.nan, 1, '"'),
                                 'Count':  count_str,
                                 'Result': str(pr.get('description', '—')).replace('_', ' ').title(),
-                                'Event':  str(pr.get('events', '')).replace('_', ' ').title() if pr.get('events') else '—',
+                                'Event':  str(_ev_val).replace('_', ' ').title() if _has_event else '—',
+                                '_vid':   _vid_url,
                             })
 
                         if pitch_rows:
                             pdf = pd.DataFrame(pitch_rows)
                             rows_html = ""
                             for _, pr_row in pdf.iterrows():
+                                _vid = pr_row.get('_vid', '')
+                                if _vid:
+                                    vid_cell = (f"<a href='{_vid}' target='_blank' style='color:#3a9dff;"
+                                                f"font-size:0.75rem;text-decoration:none;'>▶ Watch</a>")
+                                else:
+                                    vid_cell = "—"
                                 rows_html += (
                                     f"<tr>"
                                     f"<td>{pr_row['#']}</td><td>{pr_row['Type']}</td>"
@@ -1396,6 +1416,7 @@ if is_pitcher:
                                     f"<td>{pr_row['IVB']}</td><td>{pr_row['HB']}</td>"
                                     f"<td>{pr_row['Count']}</td><td>{pr_row['Result']}</td>"
                                     f"<td>{pr_row['Event']}</td>"
+                                    f"<td>{vid_cell}</td>"
                                     f"</tr>"
                                 )
                             st.markdown(f"""
@@ -1405,7 +1426,7 @@ if is_pitcher:
                                 <tr style="background:#1c2230;color:#f0c040;font-family:'Barlow Condensed',sans-serif;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;">
                                   <th style="padding:5px 8px;">#</th><th>Type</th><th>Velo</th>
                                   <th>Spin</th><th>IVB</th><th>HB</th><th>Count</th>
-                                  <th>Result</th><th>Event</th>
+                                  <th>Result</th><th>Event</th><th>Video</th>
                                 </tr>
                               </thead>
                               <tbody style="color:#e8eaf0;">
@@ -1893,7 +1914,7 @@ if is_hitter:
                                 event   = ev_row.iloc[-1]['events'] if len(ev_row) > 0 else ''
                                 sv      = ev_row.iloc[-1].get('sv_id',   None) if len(ev_row) > 0 else None
                                 play    = ev_row.iloc[-1].get('play_id', None) if len(ev_row) > 0 else None
-                                lnk     = savant_url(sv, play)
+                                lnk     = savant_url(play, sv)
                                 pitches = len(ab_df)
                                 # Pitch sequence
                                 seq = ', '.join(
@@ -1916,8 +1937,7 @@ if is_hitter:
                                         vid = (f"<a href='{lnk}' target='_blank' style='color:#3a9dff;"
                                                f"font-size:0.75rem;text-decoration:none;'>▶ Watch</a>")
                                     else:
-                                        vid = (f"<a href='{_bat_game_url}' target='_blank' style='color:#505a70;"
-                                               f"font-size:0.72rem;text-decoration:none;'>📊 Game</a>")
+                                        vid = "—"
                                     rows_html += (
                                         f"<tr>"
                                         f"<td>{ab_row['Pitches']}</td>"

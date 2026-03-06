@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -15,8 +14,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from utils import (
     THEME_CSS, load_stuff_model, add_engineered_features,
-    standardize_to_model_input, run_stuff_plus, generate_arsenal_recommendations,
-    render_recommendations, get_stuff_color_class, create_summary,
+    standardize_to_model_input, run_stuff_plus, create_summary,
     confidence_ellipse, get_games_for_date,
 )
 
@@ -74,7 +72,8 @@ if mode == "MLB Game":
                     "pitcher", "player_name", "pitch_type", "release_speed", "release_spin_rate",
                     "pfx_x", "pfx_z", "release_extension", "release_pos_z", "release_pos_x",
                     "spin_axis", "vx0", "vy0", "vz0", "ax", "ay", "az", "p_throws",
-                    "plate_x", "plate_z", "description", "arm_angle"
+                    "plate_x", "plate_z", "description", "arm_angle",
+                    "events", "at_bat_number", "bat_score", "post_bat_score",
                 ]
                 needed_cols = list(set((model_dict["features"] if model_dict else []) + raw_needed))
                 game_df = game_df[[c for c in needed_cols if c in game_df.columns]]
@@ -105,53 +104,77 @@ elif mode == "Upload CSV":
                 st.session_state.report_data = processed
             st.success(f"✅ Stuff+ calculated on {len(processed):,} pitches")
 
+# ---- Game line helper ----
+def _game_line(df):
+    """Compute IP, PA, R, H, K, BB, HBP, HR, Strike%, Whiffs from Statcast pitch-level data."""
+    _STRIKE_DESCS = {
+        'called_strike', 'swinging_strike', 'swinging_strike_blocked',
+        'foul', 'foul_tip', 'foul_bunt', 'foul_pitchout', 'missed_bunt', 'bunt_foul_tip',
+    }
+    _WHIFF_DESCS = {'swinging_strike', 'swinging_strike_blocked'}
+    _SINGLE_OUT = {
+        'strikeout', 'field_out', 'force_out', 'fielders_choice_out', 'fielders_choice',
+        'sac_fly', 'sac_bunt', 'caught_stealing_2b', 'caught_stealing_3b',
+        'caught_stealing_home', 'batter_interference', 'fan_interference', 'other_out',
+    }
+    _DOUBLE_OUT = {
+        'grounded_into_double_play', 'double_play', 'strikeout_double_play', 'sac_fly_double_play',
+    }
+    _TRIPLE_OUT = {'triple_play'}
+
+    if 'events' in df.columns:
+        ev = df['events']
+        terminal = df[ev.notna() & ev.astype(str).str.strip().isin(
+            set(ev.dropna().astype(str).unique()) - {'', 'nan', 'None'}
+        )]
+        # Simpler: terminal = rows where events is a real string
+        terminal = df[ev.apply(lambda x: pd.notna(x) and str(x).strip() not in ('', 'nan', 'None'))]
+        evs = terminal['events'].astype(str)
+
+        pa  = len(terminal)
+        h   = evs.isin(['single', 'double', 'triple', 'home_run']).sum()
+        hr  = (evs == 'home_run').sum()
+        k   = evs.isin(['strikeout', 'strikeout_double_play']).sum()
+        bb  = evs.isin(['walk', 'intent_walk']).sum()
+        hbp = (evs == 'hit_by_pitch').sum()
+
+        s_outs = evs.isin(_SINGLE_OUT).sum()
+        d_outs = evs.isin(_DOUBLE_OUT).sum()
+        t_outs = evs.isin(_TRIPLE_OUT).sum()
+        total_outs = int(s_outs + d_outs * 2 + t_outs * 3)
+        ip = f"{total_outs // 3}.{total_outs % 3}"
+
+        r = '—'
+        if 'bat_score' in df.columns and 'post_bat_score' in df.columns:
+            try:
+                runs = (pd.to_numeric(terminal['post_bat_score'], errors='coerce') -
+                        pd.to_numeric(terminal['bat_score'],      errors='coerce')).clip(lower=0).sum()
+                r = int(runs)
+            except Exception:
+                pass
+    else:
+        ip = '—'; pa = '—'; r = '—'; h = '—'; k = '—'; bb = '—'; hbp = '—'; hr = '—'
+
+    if 'description' in df.columns:
+        descs = df['description'].fillna('')
+        n = len(descs)
+        str_pct = f"{descs.isin(_STRIKE_DESCS).sum() / n * 100:.1f}" if n else '—'
+        whiffs  = int(descs.isin(_WHIFF_DESCS).sum())
+    else:
+        str_pct = '—'; whiffs = '—'
+
+    return {'IP': ip, 'PA': pa, 'R': r, 'H': h, 'K': k,
+            'BB': bb, 'HBP': hbp, 'HR': hr, 'Strike%': str_pct, 'Whiffs': whiffs}
+
+
 # ---- Main Display ----
 data = st.session_state.report_data
 
 if not data.empty:
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📊 Game Summary", "🎯 Pitcher Report", "🔬 Arsenal Optimizer", "💾 Export"
-    ])
+    tab1, tab2 = st.tabs(["🎯 Pitcher Report", "💾 Export"])
 
-    # ---- TAB 1: GAME SUMMARY ----
+    # ---- TAB 1: PITCHER REPORT ----
     with tab1:
-        st.markdown('<div class="section-header">Game Summary</div>', unsafe_allow_html=True)
-        summary = (
-            data.groupby(["player_name"])
-            .agg(Pitches=("release_speed","count"), Avg_Stuff=("stuff_plus","mean"),
-                 Avg_Velo=("release_speed","mean"), Max_Velo=("release_speed","max"))
-            .round(1).reset_index()
-            .rename(columns={"player_name":"Pitcher","Avg_Stuff":"Avg Stuff+","Avg_Velo":"Avg Velo","Max_Velo":"Max Velo"})
-            .sort_values("Avg Stuff+", ascending=False)
-        )
-        fig = go.Figure(data=[go.Table(
-            header=dict(values=list(summary.columns), fill_color='#1c2230',
-                        font=dict(color='#f0c040', size=12, family='Barlow Condensed'),
-                        line_color='#2a3348', align='left', height=36),
-            cells=dict(values=[summary[c] for c in summary.columns],
-                       fill_color=[['#141820' if i%2==0 else '#111418' for i in range(len(summary))]],
-                       font=dict(color='#e8eaf0', size=12, family='Barlow'),
-                       line_color='#2a3348', align='left', height=32)
-        )])
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                          margin=dict(l=0,r=0,t=0,b=0), height=max(200, len(summary)*34+70))
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.markdown('<div class="section-header">Pitch Type Distribution</div>', unsafe_allow_html=True)
-        if 'pitch_type' in data.columns:
-            pt_counts = data['pitch_type'].value_counts().reset_index()
-            pt_counts.columns = ['Pitch Type', 'Count']
-            fig_bar = px.bar(pt_counts, x='Pitch Type', y='Count', color='Count',
-                             color_continuous_scale=[[0,'#2a3348'],[1,'#f0c040']])
-            fig_bar.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                  font=dict(color='#e8eaf0', family='Barlow'), coloraxis_showscale=False,
-                                  xaxis=dict(gridcolor='#2a3348'), yaxis=dict(gridcolor='#2a3348'),
-                                  margin=dict(l=0,r=0,t=20,b=0), height=280)
-            fig_bar.update_traces(marker_line_width=0)
-            st.plotly_chart(fig_bar, use_container_width=True)
-
-    # ---- TAB 2: PITCHER REPORT ----
-    with tab2:
         pitchers = sorted(data["player_name"].dropna().unique())
         selected_pitcher = st.selectbox("Select Pitcher", pitchers, key='pitcher_report')
         pitcher_df = data[data["player_name"] == selected_pitcher].copy()
@@ -173,6 +196,30 @@ if not data.empty:
                         <div class="metric-value">{value}</div>
                         <div class="metric-sub">{unit}</div>
                     </div>""", unsafe_allow_html=True)
+
+            # ── Game line stat table ──────────────────────────────────────────
+            gl = _game_line(pitcher_df)
+            _cols = ['IP', 'PA', 'R', 'H', 'K', 'BB', 'HBP', 'HR', 'Strike%', 'Whiffs']
+            _header = "".join(
+                f"<th style='padding:7px 14px;text-align:center;font-family:\"Barlow Condensed\",sans-serif;"
+                f"font-size:0.78rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;"
+                f"color:#f0c040;border-bottom:2px solid #f0c040;white-space:nowrap;'>{c}</th>"
+                for c in _cols
+            )
+            _row = "".join(
+                f"<td style='padding:8px 14px;text-align:center;font-family:\"Barlow Condensed\",sans-serif;"
+                f"font-size:1.15rem;font-weight:700;color:#e8eaf0;'>{gl[c]}</td>"
+                for c in _cols
+            )
+            st.markdown(f"""
+            <div style="overflow-x:auto;margin:1rem 0 1.5rem;">
+              <table style="border-collapse:collapse;background:#141820;border:1px solid #2a3348;
+                            border-radius:8px;overflow:hidden;width:auto;">
+                <thead><tr style="background:#1c2230;">{_header}</tr></thead>
+                <tbody><tr>{_row}</tr></tbody>
+              </table>
+            </div>
+            """, unsafe_allow_html=True)
 
             st.markdown('<div class="section-header" style="margin-top:1.5rem;">Pitch Arsenal Breakdown</div>', unsafe_allow_html=True)
             summary_table = create_summary(pitcher_df)
@@ -242,101 +289,8 @@ if not data.empty:
             st.pyplot(fig_charts)
             plt.close(fig_charts)
 
-    # ---- TAB 3: ARSENAL OPTIMIZER ----
-    with tab3:
-        st.markdown('<div class="section-header">Arsenal Optimizer & Shape Recommendations</div>', unsafe_allow_html=True)
-        pitchers_opt = sorted(data["player_name"].dropna().unique())
-        selected_opt = st.selectbox("Select Pitcher", pitchers_opt, key='pitcher_opt')
-        pitcher_opt_df = data[data["player_name"] == selected_opt].copy()
-
-        if not pitcher_opt_df.empty:
-            recs, hand_opt, arm_opt = generate_arsenal_recommendations(pitcher_opt_df)
-
-            c1, c2, c3, c4 = st.columns(4)
-            for col, (label, value, sub) in zip([c1,c2,c3,c4], [
-                ("ARM ANGLE",   f"{arm_opt:.0f}°", "degrees from horizontal"),
-                ("HANDEDNESS",  "LHP" if hand_opt == 'L' else "RHP", "throwing arm"),
-                ("PITCH TYPES", pitcher_opt_df['pitch_type'].nunique(), "in arsenal"),
-                ("AVG STUFF+",  f"{pitcher_opt_df['stuff_plus'].mean():.0f}", "across all pitches"),
-            ]):
-                with col:
-                    st.markdown(f"""
-                    <div class="metric-card">
-                        <div class="metric-label">{label}</div>
-                        <div class="metric-value">{value}</div>
-                        <div class="metric-sub">{sub}</div>
-                    </div>""", unsafe_allow_html=True)
-
-            st.markdown("<div style='height:1.5rem'></div>", unsafe_allow_html=True)
-
-            if 'spin_efficiency' in pitcher_opt_df.columns and 'release_spin_rate' in pitcher_opt_df.columns:
-                st.markdown('<div class="section-header">Spin Profile by Pitch Type</div>', unsafe_allow_html=True)
-                spin_summary = pitcher_opt_df.groupby('pitch_type').agg(
-                    Spin_Rate=('release_spin_rate','mean'),
-                    Spin_Efficiency=('spin_efficiency','mean'),
-                ).reset_index().dropna()
-
-                palette_hex = ['#f0c040','#3a9dff','#3dcc7c','#f05050','#c084fc','#fb923c']
-                col_r, col_e = st.columns(2)
-                with col_r:
-                    fig_spin = go.Figure()
-                    for i, (_, row) in enumerate(spin_summary.iterrows()):
-                        fig_spin.add_trace(go.Bar(name=row['pitch_type'], x=[row['pitch_type']], y=[row['Spin_Rate']],
-                                                  marker_color=palette_hex[i % len(palette_hex)],
-                                                  text=f"{row['Spin_Rate']:.0f}", textposition='outside',
-                                                  textfont=dict(color='#e8eaf0', size=11)))
-                    fig_spin.update_layout(title=dict(text="Spin Rate by Pitch", font=dict(color='#f0c040', size=13)),
-                                           paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#141820',
-                                           font=dict(color='#e8eaf0', family='Barlow'), showlegend=False, height=280,
-                                           yaxis=dict(gridcolor='#2a3348', title='RPM'),
-                                           xaxis=dict(gridcolor='#2a3348'), margin=dict(l=0,r=0,t=40,b=0))
-                    st.plotly_chart(fig_spin, use_container_width=True)
-
-                with col_e:
-                    fig_eff = go.Figure()
-                    for i, (_, row) in enumerate(spin_summary.iterrows()):
-                        fig_eff.add_trace(go.Bar(name=row['pitch_type'], x=[row['pitch_type']], y=[row['Spin_Efficiency']*100],
-                                                 marker_color=palette_hex[i % len(palette_hex)],
-                                                 text=f"{row['Spin_Efficiency']:.0%}", textposition='outside',
-                                                 textfont=dict(color='#e8eaf0', size=11)))
-                    fig_eff.update_layout(title=dict(text="Spin Efficiency %", font=dict(color='#f0c040', size=13)),
-                                          paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='#141820',
-                                          font=dict(color='#e8eaf0', family='Barlow'), showlegend=False, height=280,
-                                          yaxis=dict(gridcolor='#2a3348', title='%', range=[0,115]),
-                                          xaxis=dict(gridcolor='#2a3348'), margin=dict(l=0,r=0,t=40,b=0))
-                    st.plotly_chart(fig_eff, use_container_width=True)
-
-            st.markdown('<div class="section-header">Shape Recommendations</div>', unsafe_allow_html=True)
-            render_recommendations(recs, hand_opt, arm_opt)
-
-            from utils import IVB_BENCHMARKS
-            st.markdown('<div class="section-header">Movement vs. MLB Benchmarks</div>', unsafe_allow_html=True)
-            pitch_avgs = pitcher_opt_df.groupby('pitch_type').agg(
-                IVB=('ivb','mean'), HB=('hb','mean'), pitch_group=('pitch_type_group','first')
-            ).reset_index().dropna(subset=['IVB'])
-
-            if not pitch_avgs.empty:
-                bm_rows = []
-                for _, row in pitch_avgs.iterrows():
-                    b = IVB_BENCHMARKS.get(row['pitch_group'], {})
-                    bm_rows.append({'Pitch': row['pitch_type'], 'Your IVB': round(row['IVB'],1),
-                                    'MLB Avg IVB': b.get('avg','—'), 'MLB Elite IVB': b.get('elite','—')})
-                bm_df = pd.DataFrame(bm_rows)
-                fig_bm = go.Figure(data=[go.Table(
-                    header=dict(values=list(bm_df.columns), fill_color='#1c2230',
-                                font=dict(color='#f0c040', size=11, family='Barlow Condensed'),
-                                line_color='#2a3348', align='left', height=32),
-                    cells=dict(values=[bm_df[c] for c in bm_df.columns],
-                               fill_color=[['#141820' if i%2==0 else '#111418' for i in range(len(bm_df))]],
-                               font=dict(color='#e8eaf0', size=11, family='Barlow'),
-                               line_color='#2a3348', align='left', height=28)
-                )])
-                fig_bm.update_layout(paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0,r=0,t=0,b=0),
-                                     height=max(120, len(bm_df)*30+55))
-                st.plotly_chart(fig_bm, use_container_width=True)
-
-    # ---- TAB 4: EXPORT ----
-    with tab4:
+    # ---- TAB 2: EXPORT ----
+    with tab2:
         st.markdown('<div class="section-header">Export Data</div>', unsafe_allow_html=True)
         st.markdown(f"""
         <div class="info-box">
